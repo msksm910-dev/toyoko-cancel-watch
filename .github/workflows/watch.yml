@@ -30,7 +30,7 @@ jobs:
       - name: 空室チェック
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python checker.py --minutes 50 --interval 120
+        run: python -u checker.py --minutes 50 --interval 120
 
       - name: 状態を保存
         if: always()
