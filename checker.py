@@ -40,6 +40,10 @@ class FetchError(Exception):
     pass
 
 
+class MaintenanceError(FetchError):
+    pass
+
+
 def now_jst() -> datetime:
     return datetime.now(JST)
 
@@ -60,11 +64,16 @@ def fetch_plan(code: str) -> dict:
         "User-Agent": UA, "Accept-Language": "ja,en;q=0.8"})
     try:
         with urllib.request.urlopen(req, timeout=40) as res:
+            final_url = res.geturl()
             html = res.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
+        if e.code == 503 or "maintenance" in (e.geturl() or ""):
+            raise MaintenanceError("東横インがメンテナンス中") from e
         raise FetchError(f"HTTP {e.code}") from e
     except Exception as e:  # noqa: BLE001
         raise FetchError(f"通信エラー: {e}") from e
+    if "maintenance" in final_url or "システムメンテナンス" in html:
+        raise MaintenanceError("東横インがメンテナンス中")
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
         raise FetchError("ページ構造が想定と違う（アクセス制限かサイト変更の可能性）")
@@ -128,12 +137,21 @@ def save_state(state: dict) -> None:
 
 
 def check_all(state: dict) -> None:
+    g = state.setdefault("_global", {"maint": False})
     for i, (code, name) in enumerate(HOTELS.items()):
         if i:
             time.sleep(REQUEST_GAP_SEC)
         st = state.setdefault(code, {"vacant": 0, "fails": 0, "alerted": False})
         try:
             vac, price = count_vacant(fetch_plan(code))
+        except MaintenanceError:
+            print(f"{now_jst():%H:%M:%S} {name}: 東横インがメンテナンス中（待機）")
+            if not g["maint"]:
+                push("⏸ 東横インがメンテナンス中",
+                     "空室監視を一時停止しています。メンテナンスが終わると自動で再開します。",
+                     priority=2)
+                g["maint"] = True
+            return
         except FetchError as e:
             st["fails"] += 1
             print(f"{now_jst():%H:%M:%S} {name}: 取得失敗({st['fails']}) {e}")
@@ -142,6 +160,10 @@ def check_all(state: dict) -> None:
                      f"{name} の空室を{st['fails']}回連続で取得できませんでした。\n{e}", priority=3)
                 st["alerted"] = True
             continue
+        if g["maint"]:
+            push("▶ 東横インの空室監視を再開しました",
+                 "メンテナンスが終わったので、2分おきのチェックに戻りました。", priority=2)
+            g["maint"] = False
         st["fails"], st["alerted"] = 0, False
         prev = st.get("vacant", 0)
         print(f"{now_jst():%H:%M:%S} {name}: 空室 {prev} -> {vac}")
