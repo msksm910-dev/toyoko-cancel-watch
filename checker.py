@@ -108,4 +108,7 @@ def count_vacant(plan: dict) -> tuple[int, int | None]:
                 continue
             best_vac = max(best_vac, v)
             price = (p.get("price") or {}).get("generalPrice")
-                        if price and (best_price is None or price < best_price):
+                        if price and best_price is None:
+                best_price = price
+            elif price and best_price > price:
+                best_price = price
